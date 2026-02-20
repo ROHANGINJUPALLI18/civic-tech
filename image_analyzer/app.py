@@ -25,7 +25,8 @@ COMPLAINT_TYPES = {
     "Pothole": ["pothole", "hole in road", "asphalt hole", "pavement damage"],
     "Garbage": ["garbage", "trash", "litter", "waste", "dumping"],
     "Streetlight": ["streetlight", "light pole", "lamp post", "street lamp", "light fixture"],
-    "Sewage Overflow": ["sewage", "drainage", "sewer", "manhole", "overflow", "water pooling"],
+    "Drainage": ["drainage", "drain", "clogged drain", "blocked drain", "water pooling", "stagnant water"],
+    "Sewage Overflow": ["sewage", "sewer", "manhole", "overflow", "sewage backup"],
 }
 
 

@@ -20,6 +20,7 @@
     "react": "19.2.3",
     "react-bits": "^1.0.5",
     "react-dom": "19.2.3",
+    "sharp": "^0.33.5",
     "tailwind-merge": "^3.5.0"
   },
   "devDependencies": {

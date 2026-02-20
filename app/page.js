@@ -2,8 +2,6 @@
 
 import { useEffect, useState } from "react";
 
-import { SpotlightBanner } from "@/components/civic/spotlight-banner";
-import { ReactBitsChip } from "@/components/civic/reactbits-chip";
 import { Button } from "@/components/ui/button";
 
 function Notice({ type = "info", children }) {
@@ -17,18 +15,6 @@ function Notice({ type = "info", children }) {
     <div className={`rounded-md border px-3 py-2 text-sm ${styles}`}>
       {children}
     </div>
-  );
-}
-
-function Pill({ children, tone = "blue" }) {
-  const styles =
-    tone === "purple"
-      ? "bg-purple-100 text-purple-700"
-      : "bg-blue-100 text-blue-700";
-  return (
-    <span className={`rounded-full px-2.5 py-1 text-xs font-medium ${styles}`}>
-      {children}
-    </span>
   );
 }
 
@@ -91,17 +77,6 @@ export default function LoginPage() {
     <main className="min-h-screen bg-slate-50">
       <section className="mx-auto flex w-full max-w-4xl items-center justify-center p-4 md:p-8">
         <div className="w-full space-y-4">
-          <SpotlightBanner
-            title="Civic Complaint System"
-            subtitle="Simple hardcoded login for separate user and admin dashboards."
-          />
-
-          <div className="flex flex-wrap items-center gap-3">
-            <ReactBitsChip />
-            <Pill>Role-based access</Pill>
-            <Pill tone="purple">Hardcoded backend auth</Pill>
-          </div>
-
           <div className="mx-auto w-full max-w-md rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
             <h2 className="mb-4 text-lg font-semibold text-slate-900">Login</h2>
 

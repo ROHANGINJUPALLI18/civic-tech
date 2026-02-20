@@ -1,12 +1,7 @@
 import { NextResponse } from "next/server";
 
 import { readStore, writeStore } from "@/lib/store";
-import {
-  computeTechnicianTrust,
-  getNextState,
-  runPreValidation,
-  runResolutionValidation,
-} from "@/lib/workflow";
+import { computeTechnicianTrust, getNextState } from "@/lib/workflow";
 
 function getRoutingSuggestion(technicians) {
   const candidates = technicians
@@ -33,16 +28,7 @@ export async function POST(_, { params }) {
     );
   }
 
-  const preValidation = runPreValidation(complaint, store.complaints);
-  const resolutionValidation = runResolutionValidation(
-    complaint.beforeEvidence,
-    complaint.afterEvidence,
-  );
-
-  const nextState = getNextState(
-    complaint.state,
-    resolutionValidation.requiresManagerReview,
-  );
+  const nextState = getNextState(complaint.state, false);
 
   if (!nextState) {
     return NextResponse.json(
@@ -54,39 +40,6 @@ export async function POST(_, { params }) {
   let assignedTechnicianId = complaint.assignedTechnicianId;
   let updatedTechnicians = store.technicians;
   const logsToAdd = [];
-
-  if (complaint.state === "Verified") {
-    const routed = getRoutingSuggestion(store.technicians);
-    if (routed) {
-      assignedTechnicianId = routed.id;
-      updatedTechnicians = store.technicians.map((tech) =>
-        tech.id === routed.id
-          ? { ...tech, activeAssignments: tech.activeAssignments + 1 }
-          : tech,
-      );
-      logsToAdd.push(
-        `${complaint.id} routed to ${routed.name} by load + trust policy.`,
-      );
-    }
-  }
-
-  if (
-    complaint.state === "AI Pre-Validation" &&
-    preValidation.flaggedForHumanReview
-  ) {
-    logsToAdd.push(
-      `${complaint.id} soft-flagged: ${preValidation.suspiciousSignals.join(", ") || "low confidence"}.`,
-    );
-  }
-
-  if (
-    complaint.state === "AI Resolution Validation" &&
-    resolutionValidation.requiresManagerReview
-  ) {
-    logsToAdd.push(
-      `${complaint.id} flagged for manager review: ${resolutionValidation.suspiciousSignals.join(", ")}.`,
-    );
-  }
 
   if (nextState === "Closed") {
     logsToAdd.push(`${complaint.id} closed after user confirmation.`);

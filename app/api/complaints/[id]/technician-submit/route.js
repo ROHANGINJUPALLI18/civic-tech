@@ -1,15 +1,26 @@
 import { NextResponse } from "next/server";
-import path from "node:path";
 
-import {
-  computeSimilarityScore,
-  estimateObjectPresence,
-  readStoredImage,
-  saveImageFile,
-} from "@/lib/image-validation";
+import { saveImageFile } from "@/lib/image-validation";
 import { readStore, writeStore } from "@/lib/store";
-import { runResolutionValidation } from "@/lib/workflow";
-import { validateResolution } from "@/lib/image-analyzer-client";
+
+function parseCoordinate(value) {
+  if (value === null || value === undefined || value === "") return null;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function haversineMeters(a, b) {
+  const toRadians = (value) => (value * Math.PI) / 180;
+  const earthRadius = 6371000;
+  const dLat = toRadians(b.lat - a.lat);
+  const dLon = toRadians(b.lng - a.lng);
+  const lat1 = toRadians(a.lat);
+  const lat2 = toRadians(b.lat);
+  const h =
+    Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+    Math.sin(dLon / 2) * Math.sin(dLon / 2) * Math.cos(lat1) * Math.cos(lat2);
+  return 2 * earthRadius * Math.atan2(Math.sqrt(h), Math.sqrt(1 - h));
+}
 
 export async function POST(request, { params }) {
   const { id } = await params;
@@ -25,6 +36,8 @@ export async function POST(request, { params }) {
         String(formData.get("proofCaptured") || "false") === "true",
       scanConfirmed:
         String(formData.get("scanConfirmed") || "false") === "true",
+      afterLatitude: parseCoordinate(formData.get("afterLatitude")),
+      afterLongitude: parseCoordinate(formData.get("afterLongitude")),
     };
     afterImageFile = formData.get("afterImage");
   } else {
@@ -41,7 +54,7 @@ export async function POST(request, { params }) {
     );
   }
 
-  if (!["In Progress", "Work Uploaded", "Assigned"].includes(complaint.state)) {
+  if (!["Assigned", "In Progress"].includes(complaint.state)) {
     return NextResponse.json(
       {
         message: "Complaint is not ready for technician completion submission",
@@ -50,79 +63,72 @@ export async function POST(request, { params }) {
     );
   }
 
-  if (!payload?.proofCaptured) {
-    const flaggedStore = {
-      ...store,
-      complaints: store.complaints.map((item) =>
-        item.id === complaint.id ? { ...item, state: "Manager Review" } : item,
-      ),
-      logs: [
-        `Fraud alert: ${complaint.id} completion rejected due to missing proof evidence.`,
-        ...store.logs,
-      ].slice(0, 100),
-    };
-
-    await writeStore(flaggedStore);
-    return NextResponse.json(flaggedStore);
-  }
-
   if (!afterImageFile || typeof afterImageFile.arrayBuffer !== "function") {
     return NextResponse.json(
-      { message: "After-work image is required for resolution validation" },
+      { message: "After-work image is required" },
       { status: 400 },
     );
   }
 
-  if (!complaint.imagePath) {
+  if (
+    !Number.isFinite(payload.afterLatitude) ||
+    !Number.isFinite(payload.afterLongitude)
+  ) {
     return NextResponse.json(
-      { message: "Complaint does not have a baseline image for comparison" },
+      {
+        message:
+          "Problem solver location coordinates are required for work upload validation.",
+      },
+      { status: 400 },
+    );
+  }
+
+  if (
+    !Number.isFinite(complaint?.location?.lat) ||
+    !Number.isFinite(complaint?.location?.lng)
+  ) {
+    return NextResponse.json(
+      {
+        message: "Complaint location missing. Unable to validate completion.",
+      },
+      { status: 400 },
+    );
+  }
+
+  const locationDistanceMeters = haversineMeters(
+    { lat: complaint.location.lat, lng: complaint.location.lng },
+    { lat: payload.afterLatitude, lng: payload.afterLongitude },
+  );
+
+  if (locationDistanceMeters > 120) {
+    return NextResponse.json(
+      {
+        message:
+          "Work upload rejected: problem solver location does not match complaint location.",
+      },
       { status: 400 },
     );
   }
 
   const savedAfterImage = await saveImageFile(afterImageFile, "after-work");
-  const beforeBuffer = await readStoredImage(complaint.imagePath);
-  const similarity = await computeSimilarityScore(
-    beforeBuffer,
-    savedAfterImage.buffer,
-  );
-  const objectStillDetected = await estimateObjectPresence(
-    complaint.category,
-    savedAfterImage.buffer,
-  );
-
-  // AI validation: Check if issue was actually resolved
-  const resolutionValidation = await validateResolution(
-    complaint.imagePath
-      ? path.join(process.cwd(), "data", complaint.imagePath)
-      : "",
-    savedAfterImage.absolutePath,
-    complaint.category,
-  );
-
-  // If AI says issue is not resolved with high confidence
-  const shouldFlagForReview =
-    (!resolutionValidation.resolved && resolutionValidation.confidence > 0.7) ||
-    objectStillDetected ||
-    similarity > 0.75;
-
   const afterEvidence = {
-    objectDetected: objectStillDetected,
-    ssim: similarity,
-    aiResolved: resolutionValidation.resolved,
-    aiConfidence: resolutionValidation.confidence,
-    aiReason: resolutionValidation.reason,
+    objectDetected: false,
+    ssim: null,
+    aiResolved: null,
+    aiConfidence: null,
+    aiReason: null,
+    locationMatch: true,
+    locationDistanceMeters: Math.round(locationDistanceMeters),
+    afterCoordinates: {
+      lat: payload.afterLatitude,
+      lng: payload.afterLongitude,
+    },
+    beforeCoordinates: {
+      lat: complaint.location.lat,
+      lng: complaint.location.lng,
+    },
     imagePath: savedAfterImage.relativePath,
   };
-
-  const validation = runResolutionValidation(
-    complaint.beforeEvidence,
-    afterEvidence,
-  );
-  const nextState =
-    shouldFlagForReview || validation.requiresManagerReview
-      ? "Manager Review"
-      : "Completed";
 
   const nextStore = {
     ...store,
@@ -130,20 +136,18 @@ export async function POST(request, { params }) {
       item.id === complaint.id
         ? {
             ...item,
-            state: nextState,
+            state: "User Confirmation",
             afterEvidence,
             technicianSubmission: {
               submittedAt: new Date().toISOString(),
-              proofCaptured: true,
-              scanConfirmed: true,
+              proofCaptured: Boolean(payload?.proofCaptured),
+              scanConfirmed: Boolean(payload?.scanConfirmed),
             },
           }
         : item,
     ),
     logs: [
-      nextState === "Manager Review"
-        ? `Technician submission for ${complaint.id} flagged for manager review. AI: ${resolutionValidation.reason}`
-        : `Technician submission for ${complaint.id} validated and marked completed.`,
+      `${complaint.id} work uploaded and location validated (${Math.round(locationDistanceMeters)}m). Awaiting user confirmation.`,
       ...store.logs,
     ].slice(0, 100),
   };

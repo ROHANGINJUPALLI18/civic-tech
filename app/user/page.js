@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import {
   PlusCircle,
-  ScanLine,
+  Camera,
   ShieldCheck,
   Trophy,
   UserCheck,
@@ -12,32 +12,42 @@ import {
 import { SpotlightBanner } from "@/components/civic/spotlight-banner";
 import { ReactBitsChip } from "@/components/civic/reactbits-chip";
 import { Button } from "@/components/ui/button";
+import { CameraModal } from "@/components/civic/camera-modal";
+import { ImageModal } from "@/components/civic/image-modal";
 import { COMPLAINT_STATES, computeSlaRisk } from "@/lib/workflow";
 
 const CATEGORY_OPTIONS = [
   "Pothole",
   "Garbage",
   "Streetlight",
+  "Drainage",
   "Sewage Overflow",
 ];
 
+const FALLBACK_COORDINATES = {
+  latitude: 28.6138,
+  longitude: 77.209,
+};
+
 const STATE_BADGE = {
   Reported: "bg-slate-100 text-slate-700",
-  "AI Pre-Validation": "bg-indigo-100 text-indigo-700",
-  "Community Review": "bg-amber-100 text-amber-700",
-  Verified: "bg-blue-100 text-blue-700",
+  "Pre-Validation": "bg-indigo-100 text-indigo-700",
   Assigned: "bg-cyan-100 text-cyan-700",
   "In Progress": "bg-lime-100 text-lime-700",
   "Work Uploaded": "bg-sky-100 text-sky-700",
-  "AI Resolution Validation": "bg-violet-100 text-violet-700",
-  "Manager Review": "bg-orange-100 text-orange-700",
-  Completed: "bg-green-100 text-green-700",
   "User Confirmation": "bg-fuchsia-100 text-fuchsia-700",
   Closed: "bg-emerald-100 text-emerald-700",
 };
 
 function badgeClass(state) {
   return STATE_BADGE[state] || "bg-slate-100 text-slate-700";
+}
+
+function displayStateLabel(state) {
+  const normalizedState = String(state || "").replace(/^AI\s+/, "");
+  if (normalizedState === "User Confirmation")
+    return "waiting for user confirmation";
+  return normalizedState;
 }
 
 function getProgressPercent(state) {
@@ -103,9 +113,17 @@ export default function UserDashboardPage() {
     category: "Pothole",
     ward: "Ward 12",
     complaintImageFile: null,
+    complaintImageCapturedAt: "",
+    complaintImageCoordinates: null,
   });
 
   const [reviewRatings, setReviewRatings] = useState({});
+  const [showCamera, setShowCamera] = useState(false);
+  const [imageModal, setImageModal] = useState({
+    isOpen: false,
+    title: "",
+    src: "",
+  });
 
   const setBusy = (id, value) => {
     setBusyIds((current) => {
@@ -113,6 +131,20 @@ export default function UserDashboardPage() {
       if (!value) return current.filter((item) => item !== id);
       return current;
     });
+  };
+
+  const toImageUrl = (relativePath) => {
+    if (!relativePath) return "";
+    return `/api/images/${relativePath
+      .split("/")
+      .map((segment) => encodeURIComponent(segment))
+      .join("/")}`;
+  };
+
+  const openImageModal = (title, relativePath) => {
+    const src = toImageUrl(relativePath);
+    if (!src) return;
+    setImageModal({ isOpen: true, title, src });
   };
 
   const applyStore = (store) => {
@@ -152,13 +184,13 @@ export default function UserDashboardPage() {
   const stats = useMemo(() => {
     const closed = complaints.filter((item) => item.state === "Closed").length;
     const active = complaints.length - closed;
-    const managerReview = complaints.filter(
-      (item) => item.state === "Manager Review",
+    const awaitingUserConfirmation = complaints.filter(
+      (item) => item.state === "User Confirmation",
     ).length;
     const atRisk = complaints.filter(
       (item) => computeSlaRisk(item) !== "healthy",
     ).length;
-    return { closed, active, managerReview, atRisk };
+    return { closed, active, awaitingUserConfirmation, atRisk };
   }, [complaints]);
 
   const communityLeaderboard = useMemo(() => {
@@ -177,13 +209,83 @@ export default function UserDashboardPage() {
   const callAndApply = async (url, options = {}, fallbackMessage) => {
     const response = await fetch(url, options);
     if (!response.ok) {
-      throw new Error(fallbackMessage || "Request failed");
+      let message = fallbackMessage || "Request failed";
+      try {
+        const payload = await response.json();
+        if (payload?.message) {
+          message = payload.message;
+        }
+      } catch {
+        try {
+          const text = await response.text();
+          if (text?.trim()) {
+            message = text;
+          }
+        } catch {
+          message = fallbackMessage || "Request failed";
+        }
+      }
+      throw new Error(message);
     }
     const payload = await response.json();
     const nextStore = payload.store || payload;
     applyStore(nextStore);
     return payload;
   };
+
+  const hasValidCoordinates = (coords) =>
+    Number.isFinite(coords?.latitude) && Number.isFinite(coords?.longitude);
+
+  const getCurrentPosition = () =>
+    new Promise((resolve) => {
+      if (!navigator.geolocation) {
+        resolve({
+          coordinates: null,
+          error: "Geolocation is not supported in this browser.",
+        });
+        return;
+      }
+
+      const options = [
+        { enableHighAccuracy: true, timeout: 12000, maximumAge: 0 },
+        { enableHighAccuracy: false, timeout: 15000, maximumAge: 300000 },
+      ];
+
+      const readPosition = (index = 0) => {
+        navigator.geolocation.getCurrentPosition(
+          (position) => {
+            resolve({
+              coordinates: {
+                latitude: position.coords.latitude,
+                longitude: position.coords.longitude,
+                accuracyMeters: position.coords.accuracy,
+              },
+              error: null,
+            });
+          },
+          (error) => {
+            if (index + 1 < options.length) {
+              readPosition(index + 1);
+              return;
+            }
+
+            const errorMessage =
+              error?.code === 1
+                ? "Location permission denied."
+                : error?.code === 2
+                  ? "Location unavailable."
+                  : error?.code === 3
+                    ? "Location request timed out."
+                    : "Unable to read location.";
+
+            resolve({ coordinates: null, error: errorMessage });
+          },
+          options[index],
+        );
+      };
+
+      readPosition(0);
+    });
 
   const createComplaint = async () => {
     if (
@@ -218,6 +320,54 @@ export default function UserDashboardPage() {
       formData.append("ward", newComplaint.ward);
 
       formData.append("complaintImage", newComplaint.complaintImageFile);
+      if (newComplaint.complaintImageCapturedAt) {
+        formData.append(
+          "complaintImageCapturedAt",
+          newComplaint.complaintImageCapturedAt,
+        );
+      }
+
+      let complaintCoords = hasValidCoordinates(
+        newComplaint.complaintImageCoordinates,
+      )
+        ? newComplaint.complaintImageCoordinates
+        : null;
+
+      let geoError = null;
+      if (!complaintCoords) {
+        const result = await getCurrentPosition();
+        complaintCoords = result.coordinates;
+        geoError = result.error;
+      }
+
+      if (!hasValidCoordinates(complaintCoords)) {
+        const permissionDenied =
+          typeof geoError === "string" && geoError.includes("denied");
+
+        if (permissionDenied) {
+          throw new Error(
+            "Location permission denied. Please enable location access and try again.",
+          );
+        }
+
+        complaintCoords = FALLBACK_COORDINATES;
+        setFeedback({
+          type: "warning",
+          text: "Live location unavailable, using fallback coordinates for this test submission.",
+        });
+      }
+
+      if (hasValidCoordinates(complaintCoords)) {
+        formData.append("latitude", String(complaintCoords.latitude));
+        formData.append("longitude", String(complaintCoords.longitude));
+      }
+
+      if (!hasValidCoordinates(newComplaint.complaintImageCoordinates)) {
+        setNewComplaint((current) => ({
+          ...current,
+          complaintImageCoordinates: complaintCoords,
+        }));
+      }
 
       const payload = await callAndApply(
         "/api/complaints",
@@ -230,24 +380,14 @@ export default function UserDashboardPage() {
         title: "",
         description: "",
         complaintImageFile: null,
+        complaintImageCapturedAt: "",
+        complaintImageCoordinates: null,
       }));
 
-      if (payload.duplicateAttached) {
-        setFeedback({
-          type: "info",
-          text: "Duplicate complaint merged into existing issue.",
-        });
-      } else if (payload.warning) {
-        setFeedback({
-          type: "warning",
-          text: "Complaint submitted with validation warning.",
-        });
-      } else {
-        setFeedback({
-          type: "success",
-          text: "Complaint submitted and validated.",
-        });
-      }
+      setFeedback({
+        type: "success",
+        text: "Complaint submitted successfully.",
+      });
     } catch (error) {
       setFeedback({
         type: "error",
@@ -277,7 +417,7 @@ export default function UserDashboardPage() {
         type: "success",
         text: accepted
           ? "Review submitted. Complaint closed with trust update."
-          : "Dispute raised. Complaint returned to manager review.",
+          : "Dispute raised. Complaint returned to in-progress.",
       });
     } catch {
       setFeedback({ type: "error", text: "Unable to submit review." });
@@ -313,7 +453,7 @@ export default function UserDashboardPage() {
         <div className="flex flex-wrap items-center gap-3">
           <ReactBitsChip />
           <Pill>User workflow</Pill>
-          <Pill tone="purple">AI validation</Pill>
+          <Pill tone="purple">Complaint tracking</Pill>
         </div>
 
         {feedback.text ? (
@@ -331,7 +471,10 @@ export default function UserDashboardPage() {
             value={stats.closed}
             icon={<UserCheck size={16} className="text-slate-500" />}
           />
-          <StatCard title="Manager Reviews" value={stats.managerReview} />
+          <StatCard
+            title="Awaiting Confirmation"
+            value={stats.awaitingUserConfirmation}
+          />
           <StatCard title="SLA At Risk" value={stats.atRisk} />
         </div>
 
@@ -342,7 +485,7 @@ export default function UserDashboardPage() {
             </h3>
             <div className="space-y-2">
               <input
-                className="w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
+                className="w-full rounded-md border border-slate-300 px-3 py-2 text-sm text-black"
                 placeholder="Your name"
                 value={newComplaint.reporterName}
                 onChange={(event) =>
@@ -353,7 +496,7 @@ export default function UserDashboardPage() {
                 }
               />
               <input
-                className="w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
+                className="w-full rounded-md border border-slate-300 px-3 py-2 text-sm text-black"
                 placeholder="Issue title"
                 value={newComplaint.title}
                 onChange={(event) =>
@@ -364,7 +507,7 @@ export default function UserDashboardPage() {
                 }
               />
               <textarea
-                className="w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
+                className="w-full rounded-md border border-slate-300 px-3 py-2 text-sm text-black"
                 rows={3}
                 placeholder="Describe the problem"
                 value={newComplaint.description}
@@ -376,7 +519,7 @@ export default function UserDashboardPage() {
                 }
               />
               <select
-                className="w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
+                className="w-full rounded-md border border-slate-300 px-3 py-2 text-sm text-black"
                 value={newComplaint.category}
                 onChange={(event) =>
                   setNewComplaint((current) => ({
@@ -392,7 +535,7 @@ export default function UserDashboardPage() {
                 ))}
               </select>
               <input
-                className="w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
+                className="w-full rounded-md border border-slate-300 px-3 py-2 text-sm text-black"
                 placeholder="Ward"
                 value={newComplaint.ward}
                 onChange={(event) =>
@@ -402,26 +545,26 @@ export default function UserDashboardPage() {
                   }))
                 }
               />
-              <input
-                className="w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
-                type="file"
-                accept="image/*"
-                onChange={(event) => {
-                  const selected = event.target.files?.[0] || null;
-                  setNewComplaint((current) => ({
-                    ...current,
-                    complaintImageFile: selected,
-                  }));
-                }}
-              />
 
-
+              <Button
+                variant="outline"
+                onClick={() => setShowCamera(true)}
+                className="w-full"
+              >
+                <Camera size={16} /> Take Photo with Camera
+              </Button>
 
               <p className="text-xs text-slate-500">
                 {newComplaint.complaintImageFile
-                  ? `Image ready: ${newComplaint.complaintImageFile.name}`
-                  : "No image selected"}
+                  ? `📷 Photo captured: ${newComplaint.complaintImageFile.name}`
+                  : "No photo captured yet"}
               </p>
+              {newComplaint.complaintImageCoordinates ? (
+                <p className="text-xs text-slate-500">
+                  📍 {newComplaint.complaintImageCoordinates.latitude.toFixed(5)}, {" "}
+                  {newComplaint.complaintImageCoordinates.longitude.toFixed(5)}
+                </p>
+              ) : null}
 
               <Button
                 onClick={createComplaint}
@@ -453,10 +596,9 @@ export default function UserDashboardPage() {
                   </thead>
                   <tbody>
                     {complaints.map((row) => {
-                      const canReview = [
-                        "Completed",
-                        "User Confirmation",
-                      ].includes(row.state);
+                      const canReview = ["User Confirmation"].includes(
+                        row.state,
+                      );
                       const risk = computeSlaRisk(row);
                       return (
                         <tr
@@ -476,7 +618,7 @@ export default function UserDashboardPage() {
                             <span
                               className={`rounded-full px-2 py-1 text-xs font-medium ${badgeClass(row.state)}`}
                             >
-                              {row.state}
+                              {displayStateLabel(row.state)}
                             </span>
                           </td>
                           <td className="px-2 py-2">
@@ -501,6 +643,36 @@ export default function UserDashboardPage() {
                                   ? "Warning"
                                   : "Healthy"}
                             </span>
+                            <div className="mt-2 flex flex-wrap gap-2">
+                              {row.imagePath ? (
+                                <Button
+                                  size="sm"
+                                  variant="outline"
+                                  onClick={() =>
+                                    openImageModal(
+                                      `${row.id} - Reported Problem`,
+                                      row.imagePath,
+                                    )
+                                  }
+                                >
+                                  View Problem Image
+                                </Button>
+                              ) : null}
+                              {row.afterEvidence?.imagePath ? (
+                                <Button
+                                  size="sm"
+                                  variant="outline"
+                                  onClick={() =>
+                                    openImageModal(
+                                      `${row.id} - Completed Work`,
+                                      row.afterEvidence.imagePath,
+                                    )
+                                  }
+                                >
+                                  View Completed Image
+                                </Button>
+                              ) : null}
+                            </div>
                           </td>
                           <td className="px-2 py-2">
                             {canReview ? (
@@ -607,6 +779,27 @@ export default function UserDashboardPage() {
             )}
           </div>
         </div>
+        <CameraModal
+          isOpen={showCamera}
+          onClose={() => setShowCamera(false)}
+          onCapture={(file, meta) =>
+            setNewComplaint((current) => ({
+              ...current,
+              complaintImageFile: file,
+              complaintImageCapturedAt:
+                meta?.capturedAt || new Date().toISOString(),
+              complaintImageCoordinates: meta?.coordinates || null,
+            }))
+          }
+        />
+        <ImageModal
+          isOpen={imageModal.isOpen}
+          title={imageModal.title}
+          src={imageModal.src}
+          onClose={() =>
+            setImageModal({ isOpen: false, title: "", src: "" })
+          }
+        />
       </section>
     </main>
   );

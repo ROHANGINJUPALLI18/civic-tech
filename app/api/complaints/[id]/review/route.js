@@ -23,7 +23,7 @@ export async function POST(request, { params }) {
   }
 
   const technicianId = complaint.assignedTechnicianId;
-  const nextState = accepted ? "Closed" : "Manager Review";
+  const nextState = accepted ? "Closed" : "In Progress";
 
   const updatedTechnicians = store.technicians.map((tech) => {
     if (tech.id !== technicianId) return tech;
@@ -39,6 +39,7 @@ export async function POST(request, { params }) {
     return {
       ...tech,
       disputes: tech.disputes + 1,
+      activeAssignments: tech.activeAssignments + 1,
     };
   });
 
@@ -61,7 +62,7 @@ export async function POST(request, { params }) {
     logs: [
       accepted
         ? `User accepted resolution for ${complaint.id} (rating ${rating}/5).`
-        : `User disputed resolution for ${complaint.id}; escalated to manager review.`,
+        : `User disputed resolution for ${complaint.id}; sent back to in-progress for rework.`,
       ...store.logs,
     ].slice(0, 100),
   };

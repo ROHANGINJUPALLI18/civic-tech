@@ -1,31 +1,32 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
-import { Camera, ShieldAlert } from "lucide-react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { Camera } from "lucide-react";
 
-import { SpotlightBanner } from "@/components/civic/spotlight-banner";
 import { ReactBitsChip } from "@/components/civic/reactbits-chip";
 import { Button } from "@/components/ui/button";
 import { CameraModal } from "@/components/civic/camera-modal";
-import { computeTechnicianTrust } from "@/lib/workflow";
+import { ImageModal } from "@/components/civic/image-modal";
 
 const STATE_BADGE = {
   Reported: "bg-slate-100 text-slate-700",
-  "AI Pre-Validation": "bg-indigo-100 text-indigo-700",
-  "Community Review": "bg-amber-100 text-amber-700",
-  Verified: "bg-blue-100 text-blue-700",
+  "Pre-Validation": "bg-indigo-100 text-indigo-700",
   Assigned: "bg-cyan-100 text-cyan-700",
   "In Progress": "bg-lime-100 text-lime-700",
   "Work Uploaded": "bg-sky-100 text-sky-700",
-  "AI Resolution Validation": "bg-violet-100 text-violet-700",
-  "Manager Review": "bg-orange-100 text-orange-700",
-  Completed: "bg-green-100 text-green-700",
   "User Confirmation": "bg-fuchsia-100 text-fuchsia-700",
   Closed: "bg-emerald-100 text-emerald-700",
 };
 
 function badgeClass(state) {
   return STATE_BADGE[state] || "bg-slate-100 text-slate-700";
+}
+
+function displayStateLabel(state) {
+  const normalizedState = String(state || "").replace(/^AI\s+/, "");
+  if (normalizedState === "User Confirmation")
+    return "waiting for user confirmation";
+  return normalizedState;
 }
 
 function Notice({ type = "info", children }) {
@@ -56,19 +57,79 @@ function Pill({ children, tone = "blue" }) {
   );
 }
 
+let leafletLoaderPromise = null;
+
+function ensureLeafletLoaded() {
+  if (typeof window === "undefined") return Promise.resolve(null);
+
+  if (window.L) return Promise.resolve(window.L);
+
+  if (!leafletLoaderPromise) {
+    leafletLoaderPromise = new Promise((resolve, reject) => {
+      const existingCss = document.querySelector(
+        'link[data-leaflet="civic-admin"]',
+      );
+      if (!existingCss) {
+        const leafletCss = document.createElement("link");
+        leafletCss.rel = "stylesheet";
+        leafletCss.href = "https://unpkg.com/leaflet@1.9.4/dist/leaflet.css";
+        leafletCss.setAttribute("data-leaflet", "civic-admin");
+        document.head.appendChild(leafletCss);
+      }
+
+      const existingScript = document.querySelector(
+        'script[data-leaflet="civic-admin"]',
+      );
+
+      if (existingScript) {
+        existingScript.addEventListener("load", () => resolve(window.L), {
+          once: true,
+        });
+        existingScript.addEventListener(
+          "error",
+          () => reject(new Error("Failed to load Leaflet script")),
+          { once: true },
+        );
+        return;
+      }
+
+      const leafletScript = document.createElement("script");
+      leafletScript.src = "https://unpkg.com/leaflet@1.9.4/dist/leaflet.js";
+      leafletScript.async = true;
+      leafletScript.setAttribute("data-leaflet", "civic-admin");
+      leafletScript.onload = () => resolve(window.L);
+      leafletScript.onerror = () =>
+        reject(new Error("Failed to load Leaflet script"));
+      document.body.appendChild(leafletScript);
+    });
+  }
+
+  return leafletLoaderPromise;
+}
+
 export default function AdminDashboardPage() {
   const [complaints, setComplaints] = useState([]);
   const [technicians, setTechnicians] = useState([]);
-  const [logs, setLogs] = useState([]);
   const [loading, setLoading] = useState(true);
   const [busyIds, setBusyIds] = useState([]);
   const [sessionUser, setSessionUser] = useState(null);
   const [feedback, setFeedback] = useState({ type: "", text: "" });
+  const [mapError, setMapError] = useState("");
 
   const [authorityFilter, setAuthorityFilter] = useState("all");
   const [selectedComplaintId, setSelectedComplaintId] = useState(null);
+  const [selectedTechnicianByComplaint, setSelectedTechnicianByComplaint] =
+    useState({});
   const [techSubmission, setTechSubmission] = useState({});
   const [cameraOpen, setCameraOpen] = useState(null);
+  const [imageModal, setImageModal] = useState({
+    isOpen: false,
+    title: "",
+    src: "",
+  });
+  const mapContainerRef = useRef(null);
+  const mapRef = useRef(null);
+  const markerLayerRef = useRef(null);
 
   const setBusy = (id, value) => {
     setBusyIds((current) => {
@@ -78,10 +139,23 @@ export default function AdminDashboardPage() {
     });
   };
 
+  const toImageUrl = (relativePath) => {
+    if (!relativePath) return "";
+    return `/api/images/${relativePath
+      .split("/")
+      .map((segment) => encodeURIComponent(segment))
+      .join("/")}`;
+  };
+
+  const openImageModal = (title, relativePath) => {
+    const src = toImageUrl(relativePath);
+    if (!src) return;
+    setImageModal({ isOpen: true, title, src });
+  };
+
   const applyStore = (store) => {
     setComplaints(store.complaints ?? []);
     setTechnicians(store.technicians ?? []);
-    setLogs(store.logs ?? []);
   };
 
   useEffect(() => {
@@ -114,21 +188,6 @@ export default function AdminDashboardPage() {
     load();
   }, []);
 
-  const managerRows = useMemo(
-    () =>
-      technicians
-        .map((technician) => {
-          const trust = computeTechnicianTrust(technician);
-          return {
-            ...technician,
-            trust,
-            assignmentStatus: trust < 20 ? "Restricted" : "Open",
-          };
-        })
-        .sort((a, b) => b.trust - a.trust),
-    [technicians],
-  );
-
   const authorityRows = useMemo(() => {
     if (authorityFilter === "all") return complaints;
     return complaints.filter((item) => item.department === authorityFilter);
@@ -144,51 +203,178 @@ export default function AdminDashboardPage() {
     [complaints],
   );
 
+  const openLocationPoints = useMemo(
+    () =>
+      complaints
+        .filter((item) => item.state !== "Closed")
+        .map((item) => ({
+          ...item,
+          lat: Number(item?.location?.lat),
+          lng: Number(item?.location?.lng),
+        }))
+        .filter(
+          (item) => Number.isFinite(item.lat) && Number.isFinite(item.lng),
+        ),
+    [complaints],
+  );
+
+  const unresolvedCount = useMemo(
+    () => complaints.filter((item) => item.state !== "Closed").length,
+    [complaints],
+  );
+
+  const selectedTechnicianId = selectedComplaintId
+    ? selectedTechnicianByComplaint[selectedComplaintId] ||
+      selectedComplaint?.assignedTechnicianId ||
+      technicians[0]?.id ||
+      ""
+    : "";
+
+  useEffect(() => {
+    if (!selectedComplaintId) return;
+    if (!technicians.length) return;
+
+    setSelectedTechnicianByComplaint((current) => {
+      if (current[selectedComplaintId]) return current;
+      const defaultTechnicianId =
+        selectedComplaint?.assignedTechnicianId || technicians[0]?.id;
+      if (!defaultTechnicianId) return current;
+      return {
+        ...current,
+        [selectedComplaintId]: defaultTechnicianId,
+      };
+    });
+  }, [
+    selectedComplaintId,
+    selectedComplaint?.assignedTechnicianId,
+    technicians,
+  ]);
+
+  useEffect(() => {
+    let disposed = false;
+
+    const renderMap = async () => {
+      if (!mapContainerRef.current) return;
+
+      try {
+        const Leaflet = await ensureLeafletLoaded();
+        if (!Leaflet || disposed) return;
+
+        if (!mapRef.current) {
+          mapRef.current = Leaflet.map(mapContainerRef.current, {
+            zoomControl: true,
+            scrollWheelZoom: true,
+          }).setView([28.6139, 77.209], 12);
+
+          Leaflet.tileLayer(
+            "https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png",
+            {
+              maxZoom: 19,
+              attribution: "&copy; OpenStreetMap contributors",
+            },
+          ).addTo(mapRef.current);
+
+          markerLayerRef.current = Leaflet.layerGroup().addTo(mapRef.current);
+        }
+
+        const markerLayer = markerLayerRef.current;
+        markerLayer.clearLayers();
+
+        if (!openLocationPoints.length) {
+          setMapError("");
+          return;
+        }
+
+        const bounds = Leaflet.latLngBounds([]);
+        openLocationPoints.forEach((point) => {
+          const marker = Leaflet.marker([point.lat, point.lng]);
+          marker.bindPopup(
+            `<div style="min-width:180px"><strong>${point.id}</strong><br/>${point.title}<br/>Status: ${displayStateLabel(point.state)}<br/>Department: ${point.department || "General"}</div>`,
+          );
+          marker.addTo(markerLayer);
+          bounds.extend([point.lat, point.lng]);
+        });
+
+        if (bounds.isValid()) {
+          mapRef.current.fitBounds(bounds, {
+            padding: [40, 40],
+            maxZoom: 15,
+          });
+        }
+
+        setMapError("");
+      } catch {
+        setMapError("Map failed to load. Check internet connection and retry.");
+      }
+    };
+
+    renderMap();
+
+    return () => {
+      disposed = true;
+    };
+  }, [openLocationPoints]);
+
+  useEffect(
+    () => () => {
+      if (mapRef.current) {
+        mapRef.current.remove();
+        mapRef.current = null;
+        markerLayerRef.current = null;
+      }
+    },
+    [],
+  );
+
+  const normalizeCoordinates = (coordinates) => {
+    if (!coordinates || typeof coordinates !== "object") return null;
+    const latCandidate =
+      coordinates.lat ?? coordinates.latitude ?? coordinates.Latitude;
+    const lngCandidate =
+      coordinates.lng ?? coordinates.longitude ?? coordinates.Longitude;
+    const lat = Number(latCandidate);
+    const lng = Number(lngCandidate);
+    if (!Number.isFinite(lat) || !Number.isFinite(lng)) return null;
+    return { lat, lng };
+  };
+
+  const readCurrentCoordinates = () =>
+    new Promise((resolve) => {
+      if (!navigator.geolocation) {
+        resolve(null);
+        return;
+      }
+
+      navigator.geolocation.getCurrentPosition(
+        (position) => {
+          resolve({
+            lat: position.coords.latitude,
+            lng: position.coords.longitude,
+          });
+        },
+        () => resolve(null),
+        { enableHighAccuracy: true, timeout: 9000, maximumAge: 0 },
+      );
+    });
+
   const callAndApply = async (url, options = {}, fallbackMessage) => {
     const response = await fetch(url, options);
-    if (!response.ok) throw new Error(fallbackMessage || "Request failed");
+    if (!response.ok) {
+      let errorMessage = fallbackMessage || "Request failed";
+      try {
+        const errorPayload = await response.json();
+        if (errorPayload?.message) {
+          errorMessage = errorPayload.message;
+        }
+      } catch {
+        // Use fallback message when response body is not JSON
+      }
+      throw new Error(errorMessage);
+    }
     const payload = await response.json();
     const nextStore = payload.store || payload;
     applyStore(nextStore);
     return payload;
-  };
-
-  const advanceComplaint = async (id) => {
-    setBusy(`adv-${id}`, true);
-    try {
-      await callAndApply(
-        `/api/complaints/${id}/advance`,
-        { method: "POST" },
-        "Advance complaint failed",
-      );
-      setFeedback({ type: "success", text: "Complaint status advanced." });
-    } catch {
-      setFeedback({
-        type: "error",
-        text: "Unable to advance complaint state.",
-      });
-    } finally {
-      setBusy(`adv-${id}`, false);
-    }
-  };
-
-  const markFalseCompletion = async (technicianId) => {
-    setBusy(technicianId, true);
-    try {
-      await callAndApply(
-        `/api/technicians/${technicianId}/penalty`,
-        { method: "POST" },
-        "Penalty update failed",
-      );
-      setFeedback({ type: "success", text: "Technician penalty recorded." });
-    } catch {
-      setFeedback({
-        type: "error",
-        text: "Unable to apply technician penalty.",
-      });
-    } finally {
-      setBusy(technicianId, false);
-    }
   };
 
   const submitTechnicianWork = async (complaint) => {
@@ -213,8 +399,25 @@ export default function AdminDashboardPage() {
     try {
       const formData = new FormData();
       formData.append("proofCaptured", String(details.proofCaptured));
+      formData.append("scanConfirmed", String(details.scanConfirmed));
 
       formData.append("afterImage", details.afterImageFile);
+      if (details.afterImageCapturedAt) {
+        formData.append("afterCapturedAt", details.afterImageCapturedAt);
+      }
+      let normalizedCoordinates = normalizeCoordinates(
+        details.afterImageCoordinates,
+      );
+      if (!normalizedCoordinates) {
+        normalizedCoordinates = await readCurrentCoordinates();
+      }
+      if (!normalizedCoordinates) {
+        normalizedCoordinates = normalizeCoordinates(complaint.location);
+      }
+      if (normalizedCoordinates) {
+        formData.append("afterLatitude", String(normalizedCoordinates.lat));
+        formData.append("afterLongitude", String(normalizedCoordinates.lng));
+      }
 
       await callAndApply(
         `/api/complaints/${complaint.id}/technician-submit`,
@@ -224,12 +427,48 @@ export default function AdminDashboardPage() {
 
       setFeedback({
         type: "success",
-        text: "Technician work submitted for AI/backend verification.",
+        text: "Technician work submitted successfully.",
       });
-    } catch {
-      setFeedback({ type: "error", text: "Technician submission failed." });
+    } catch (error) {
+      setFeedback({
+        type: "error",
+        text: error.message || "Technician submission failed.",
+      });
     } finally {
       setBusy(`tech-${complaint.id}`, false);
+    }
+  };
+
+  const assignComplaint = async () => {
+    if (!selectedComplaintId) return;
+    if (!selectedTechnicianId) {
+      setFeedback({ type: "warning", text: "Please select a technician." });
+      return;
+    }
+
+    setBusy(`assign-${selectedComplaintId}`, true);
+    try {
+      await callAndApply(
+        `/api/complaints/${selectedComplaintId}/assign`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ technicianId: selectedTechnicianId }),
+        },
+        "Assignment failed",
+      );
+
+      setFeedback({
+        type: "success",
+        text: `Complaint assigned to ${selectedTechnicianId}.`,
+      });
+    } catch (error) {
+      setFeedback({
+        type: "error",
+        text: error.message || "Assignment failed.",
+      });
+    } finally {
+      setBusy(`assign-${selectedComplaintId}`, false);
     }
   };
 
@@ -244,11 +483,7 @@ export default function AdminDashboardPage() {
   return (
     <main className="min-h-screen bg-slate-50">
       <section className="mx-auto w-full max-w-7xl space-y-5 p-4 md:p-8">
-        <div className="flex items-start justify-between gap-3">
-          <SpotlightBanner
-            title="Authority & Admin Dashboard"
-            subtitle="Manage complaint states, review technician trust, and validate completion evidence."
-          />
+        <div className="flex items-start justify-end gap-3">
           <div className="flex flex-col items-end gap-2">
             <Pill tone="purple">
               {sessionUser?.displayName || "Authority Admin"}
@@ -262,7 +497,30 @@ export default function AdminDashboardPage() {
         <div className="flex flex-wrap items-center gap-3">
           <ReactBitsChip />
           <Pill>Authority workflow</Pill>
-          <Pill tone="purple">Technician validation</Pill>
+          <Pill tone="purple">Technician workflow</Pill>
+        </div>
+
+        <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <h3 className="text-base font-semibold text-slate-900">
+              Active Problem Map
+            </h3>
+            <Pill tone="purple">Open complaints: {unresolvedCount}</Pill>
+          </div>
+          <p className="mt-2 text-sm text-slate-600">
+            Live locations of all unresolved complaints. Click markers to view
+            complaint details.
+          </p>
+          {mapError ? <Notice type="error">{mapError}</Notice> : null}
+          {!openLocationPoints.length ? (
+            <div className="mt-3 rounded-lg border border-dashed border-slate-300 bg-slate-50 p-6 text-sm text-slate-500">
+              No unresolved complaints with valid coordinates.
+            </div>
+          ) : null}
+          <div
+            ref={mapContainerRef}
+            className="mt-3 h-115 w-full overflow-hidden rounded-xl border border-slate-200"
+          />
         </div>
 
         {feedback.text ? (
@@ -297,7 +555,7 @@ export default function AdminDashboardPage() {
                   <th className="px-2 py-2 font-medium">Complaint</th>
                   <th className="px-2 py-2 font-medium">Reporter</th>
                   <th className="px-2 py-2 font-medium">Status</th>
-                  <th className="px-2 py-2 font-medium">Action</th>
+                  <th className="px-2 py-2 font-medium">Images</th>
                 </tr>
               </thead>
               <tbody>
@@ -327,17 +585,40 @@ export default function AdminDashboardPage() {
                         <span
                           className={`rounded-full px-2 py-1 text-xs font-medium ${badgeClass(row.state)}`}
                         >
-                          {row.state}
+                          {displayStateLabel(row.state)}
                         </span>
                       </td>
                       <td className="px-2 py-2">
-                        <Button
-                          size="sm"
-                          onClick={() => advanceComplaint(row.id)}
-                          disabled={busyIds.includes(`adv-${row.id}`)}
-                        >
-                          Change Status
-                        </Button>
+                        <div className="flex flex-wrap gap-2">
+                          {row.imagePath ? (
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              onClick={() =>
+                                openImageModal(
+                                  `${row.id} - Reported Problem`,
+                                  row.imagePath,
+                                )
+                              }
+                            >
+                              View Problem Image
+                            </Button>
+                          ) : null}
+                          {row.afterEvidence?.imagePath ? (
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              onClick={() =>
+                                openImageModal(
+                                  `${row.id} - Completed Work`,
+                                  row.afterEvidence.imagePath,
+                                )
+                              }
+                            >
+                              View Completed Image
+                            </Button>
+                          ) : null}
+                        </div>
                       </td>
                     </tr>
                   ))
@@ -370,15 +651,61 @@ export default function AdminDashboardPage() {
                 </option>
               ))}
             </select>
-
-            {selectedComplaint ? (
+            {selectedComplaint?.imagePath ? (
               <Button
-                onClick={() => advanceComplaint(selectedComplaint.id)}
-                disabled={busyIds.includes(`adv-${selectedComplaint.id}`)}
+                variant="outline"
+                onClick={() =>
+                  openImageModal(
+                    `${selectedComplaint.id} - Reported Problem`,
+                    selectedComplaint.imagePath,
+                  )
+                }
               >
-                Change Status
+                View Problem Image
               </Button>
             ) : null}
+            {selectedComplaint?.afterEvidence?.imagePath ? (
+              <Button
+                variant="outline"
+                onClick={() =>
+                  openImageModal(
+                    `${selectedComplaint.id} - Completed Work`,
+                    selectedComplaint.afterEvidence.imagePath,
+                  )
+                }
+              >
+                View Completed Image
+              </Button>
+            ) : null}
+            <select
+              className="min-w-56 rounded-md border border-slate-300 px-3 py-2 text-sm"
+              value={selectedTechnicianId}
+              onChange={(event) => {
+                if (!selectedComplaintId) return;
+                setSelectedTechnicianByComplaint((current) => ({
+                  ...current,
+                  [selectedComplaintId]: event.target.value,
+                }));
+              }}
+              disabled={!selectedComplaintId}
+            >
+              <option value="">Select technician</option>
+              {technicians.map((technician) => (
+                <option key={technician.id} value={technician.id}>
+                  {technician.id} - {technician.name}
+                </option>
+              ))}
+            </select>
+            <Button
+              onClick={assignComplaint}
+              disabled={
+                !selectedComplaintId ||
+                !selectedTechnicianId ||
+                busyIds.includes(`assign-${selectedComplaintId}`)
+              }
+            >
+              Assign & Set Status
+            </Button>
           </div>
 
           {selectedComplaint ? (
@@ -392,7 +719,7 @@ export default function AdminDashboardPage() {
                 <span
                   className={`rounded-full px-2 py-1 text-xs font-medium ${badgeClass(selectedComplaint.state)}`}
                 >
-                  {selectedComplaint.state}
+                  {displayStateLabel(selectedComplaint.state)}
                 </span>
               </p>
               <p>
@@ -419,55 +746,12 @@ export default function AdminDashboardPage() {
 
         <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
           <h3 className="text-base font-semibold text-slate-900">
-            Manager Trust Controls
-          </h3>
-          <div className="mt-4 overflow-x-auto">
-            <table className="min-w-full text-left text-sm">
-              <thead className="text-slate-500">
-                <tr>
-                  <th className="px-2 py-2 font-medium">Technician</th>
-                  <th className="px-2 py-2 font-medium">Trust</th>
-                  <th className="px-2 py-2 font-medium">Status</th>
-                  <th className="px-2 py-2 font-medium">Penalty</th>
-                </tr>
-              </thead>
-              <tbody>
-                {managerRows.map((row) => (
-                  <tr key={row.id} className="border-t border-slate-100">
-                    <td className="px-2 py-2">{row.name}</td>
-                    <td className="px-2 py-2">{row.trust}</td>
-                    <td className="px-2 py-2">
-                      <span
-                        className={`rounded-full px-2 py-1 text-xs font-medium ${row.assignmentStatus === "Restricted" ? "bg-red-100 text-red-700" : "bg-green-100 text-green-700"}`}
-                      >
-                        {row.assignmentStatus}
-                      </span>
-                    </td>
-                    <td className="px-2 py-2">
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        onClick={() => markFalseCompletion(row.id)}
-                        disabled={busyIds.includes(row.id)}
-                      >
-                        Penalize
-                      </Button>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </div>
-
-        <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
-          <h3 className="text-base font-semibold text-slate-900">
             Technician Panel
           </h3>
           <div className="mt-3">
             <Notice>
-              Technician completion workflow: open camera, capture evidence, submit
-              for backend AI verification.
+              Technician completion workflow: open camera, capture evidence,
+              submit after-work image from the complaint location.
             </Notice>
           </div>
 
@@ -479,6 +763,9 @@ export default function AdminDashboardPage() {
 
                   afterImageFile: null,
                 };
+                const afterImageCoordinates = normalizeCoordinates(
+                  details.afterImageCoordinates,
+                );
 
                 return (
                   <div
@@ -492,7 +779,7 @@ export default function AdminDashboardPage() {
                       <span
                         className={`rounded-full px-2 py-1 text-xs font-medium ${badgeClass(complaint.state)}`}
                       >
-                        {complaint.state}
+                        {displayStateLabel(complaint.state)}
                       </span>
                     </div>
 
@@ -504,22 +791,32 @@ export default function AdminDashboardPage() {
                     </p>
 
                     <div className="mt-3 flex flex-wrap items-center gap-2">
-                      <input
-                        className="w-60 rounded-md border border-slate-300 px-3 py-2 text-sm"
-                        type="file"
-                        accept="image/*"
-                        onChange={(event) => {
-                          const selected = event.target.files?.[0] || null;
-                          setTechSubmission((current) => ({
-                            ...current,
-                            [complaint.id]: {
-                              ...details,
-                              afterImageFile: selected,
-                            },
-                          }));
-                        }}
-                      />
-
+                      {complaint.imagePath ? (
+                        <Button
+                          variant="outline"
+                          onClick={() =>
+                            openImageModal(
+                              `${complaint.id} - Reported Problem`,
+                              complaint.imagePath,
+                            )
+                          }
+                        >
+                          View Problem Image
+                        </Button>
+                      ) : null}
+                      {complaint.afterEvidence?.imagePath ? (
+                        <Button
+                          variant="outline"
+                          onClick={() =>
+                            openImageModal(
+                              `${complaint.id} - Completed Work`,
+                              complaint.afterEvidence.imagePath,
+                            )
+                          }
+                        >
+                          View Completed Image
+                        </Button>
+                      ) : null}
                       <Button
                         variant="outline"
                         onClick={() => setCameraOpen(complaint.id)}
@@ -529,8 +826,6 @@ export default function AdminDashboardPage() {
                           ? "Photo Captured"
                           : "Open Camera"}
                       </Button>
-
-
                     </div>
 
                     <p className="mt-2 text-xs text-slate-500">
@@ -538,6 +833,12 @@ export default function AdminDashboardPage() {
                         ? `After image: ${details.afterImageFile.name}`
                         : "No after-work image selected"}
                     </p>
+                    {afterImageCoordinates ? (
+                      <p className="text-xs text-slate-500">
+                        📍 {afterImageCoordinates.lat.toFixed(5)},{" "}
+                        {afterImageCoordinates.lng.toFixed(5)}
+                      </p>
+                    ) : null}
 
                     <div className="mt-3">
                       <Button
@@ -547,17 +848,6 @@ export default function AdminDashboardPage() {
                         Submit Completion
                       </Button>
                     </div>
-
-                    {complaint.state === "Manager Review" ? (
-                      <div className="mt-3">
-                        <Notice type="error">
-                          <span className="inline-flex items-center gap-1">
-                            <ShieldAlert size={14} /> Submission flagged:
-                            potential fake/insufficient completion.
-                          </span>
-                        </Notice>
-                      </div>
-                    ) : null}
                   </div>
                 );
               })
@@ -569,40 +859,31 @@ export default function AdminDashboardPage() {
           </div>
         </div>
 
-        <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
-          <h3 className="text-base font-semibold text-slate-900">
-            Workflow Alerts
-          </h3>
-          {logs.length ? (
-            <ul className="mt-3 space-y-2">
-              {logs.slice(0, 12).map((entry, index) => (
-                <li
-                  key={`${entry}-${index}`}
-                  className="rounded-md border border-slate-100 px-3 py-2 text-sm text-slate-700"
-                >
-                  {entry}
-                </li>
-              ))}
-            </ul>
-          ) : (
-            <p className="mt-3 text-sm text-slate-500">No alerts yet.</p>
-          )}
-        </div>
-
         <CameraModal
           isOpen={cameraOpen !== null}
           onClose={() => setCameraOpen(null)}
-          onCapture={(file) => {
+          onCapture={(file, meta) => {
             if (cameraOpen !== null) {
               setTechSubmission((current) => ({
                 ...current,
                 [cameraOpen]: {
                   ...current[cameraOpen],
+                  proofCaptured: true,
+                  scanConfirmed: true,
                   afterImageFile: file,
+                  afterImageCapturedAt:
+                    meta?.capturedAt || new Date().toISOString(),
+                  afterImageCoordinates: meta?.coordinates || null,
                 },
               }));
             }
           }}
+        />
+        <ImageModal
+          isOpen={imageModal.isOpen}
+          title={imageModal.title}
+          src={imageModal.src}
+          onClose={() => setImageModal({ isOpen: false, title: "", src: "" })}
         />
       </section>
     </main>

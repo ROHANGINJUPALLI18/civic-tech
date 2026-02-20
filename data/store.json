@@ -1,0 +1,115 @@
+{
+  "complaints": [
+    {
+      "id": "CIV-1001",
+      "title": "Large pothole near school gate",
+      "category": "Pothole",
+      "state": "Reported",
+      "location": {
+        "lat": 28.6139,
+        "lng": 77.209
+      },
+      "ward": "Ward 12",
+      "createdAt": "2026-02-20T07:30:00.000Z",
+      "slaHours": 24,
+      "imageHash": "hash-pothole-a",
+      "metadataValid": true,
+      "internetHashMatch": false,
+      "reusedImageAcrossUsers": false,
+      "communityWeight": 1,
+      "assignedTechnicianId": null,
+      "beforeEvidence": {
+        "objectDetected": true,
+        "ssim": 0.25
+      },
+      "afterEvidence": {
+        "objectDetected": false,
+        "ssim": 0.47
+      }
+    },
+    {
+      "id": "CIV-1002",
+      "title": "Overflowing sewage beside market lane",
+      "category": "Sewage Overflow",
+      "state": "Assigned",
+      "location": {
+        "lat": 28.6143,
+        "lng": 77.2084
+      },
+      "ward": "Ward 12",
+      "createdAt": "2026-02-19T20:10:00.000Z",
+      "slaHours": 12,
+      "imageHash": "hash-sewage-b",
+      "metadataValid": true,
+      "internetHashMatch": false,
+      "reusedImageAcrossUsers": false,
+      "communityWeight": 4,
+      "assignedTechnicianId": "TECH-2",
+      "beforeEvidence": {
+        "objectDetected": true,
+        "ssim": 0.18
+      },
+      "afterEvidence": {
+        "objectDetected": true,
+        "ssim": 0.95
+      }
+    },
+    {
+      "id": "CIV-1003",
+      "title": "Streetlight not working for 3 nights",
+      "category": "Streetlight",
+      "state": "Community Review",
+      "location": {
+        "lat": 28.6135,
+        "lng": 77.2095
+      },
+      "ward": "Ward 9",
+      "createdAt": "2026-02-20T05:00:00.000Z",
+      "slaHours": 18,
+      "imageHash": "hash-light-c",
+      "metadataValid": false,
+      "internetHashMatch": false,
+      "reusedImageAcrossUsers": true,
+      "communityWeight": 2,
+      "assignedTechnicianId": null,
+      "beforeEvidence": {
+        "objectDetected": true,
+        "ssim": 0.32
+      },
+      "afterEvidence": {
+        "objectDetected": false,
+        "ssim": 0.5
+      }
+    }
+  ],
+  "technicians": [
+    {
+      "id": "TECH-1",
+      "name": "Aman Verma",
+      "validatedResolutions": 17,
+      "disputes": 1,
+      "falseCompletions": 0,
+      "activeAssignments": 2
+    },
+    {
+      "id": "TECH-2",
+      "name": "Priya Singh",
+      "validatedResolutions": 10,
+      "disputes": 2,
+      "falseCompletions": 1,
+      "activeAssignments": 1
+    },
+    {
+      "id": "TECH-3",
+      "name": "Ravi Kumar",
+      "validatedResolutions": 7,
+      "disputes": 3,
+      "falseCompletions": 1,
+      "activeAssignments": 0
+    }
+  ],
+  "logs": [
+    "System booted with strict complaint lifecycle controls.",
+    "AI policy: soft-flag suspicious items, never hard-block without review."
+  ]
+}

@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import path from "node:path";
 
 import {
   computeSimilarityScore,
@@ -8,6 +9,7 @@ import {
 } from "@/lib/image-validation";
 import { readStore, writeStore } from "@/lib/store";
 import { runResolutionValidation } from "@/lib/workflow";
+import { validateResolution } from "@/lib/image-analyzer-client";
 
 export async function POST(request, { params }) {
   const { id } = await params;
@@ -89,9 +91,27 @@ export async function POST(request, { params }) {
     savedAfterImage.buffer,
   );
 
+  // AI validation: Check if issue was actually resolved
+  const resolutionValidation = await validateResolution(
+    complaint.imagePath
+      ? path.join(process.cwd(), "data", complaint.imagePath)
+      : "",
+    savedAfterImage.absolutePath,
+    complaint.category,
+  );
+
+  // If AI says issue is not resolved with high confidence
+  const shouldFlagForReview =
+    (!resolutionValidation.resolved && resolutionValidation.confidence > 0.7) ||
+    objectStillDetected ||
+    similarity > 0.75;
+
   const afterEvidence = {
     objectDetected: objectStillDetected,
     ssim: similarity,
+    aiResolved: resolutionValidation.resolved,
+    aiConfidence: resolutionValidation.confidence,
+    aiReason: resolutionValidation.reason,
     imagePath: savedAfterImage.relativePath,
   };
 
@@ -99,9 +119,10 @@ export async function POST(request, { params }) {
     complaint.beforeEvidence,
     afterEvidence,
   );
-  const nextState = validation.requiresManagerReview
-    ? "Manager Review"
-    : "Completed";
+  const nextState =
+    shouldFlagForReview || validation.requiresManagerReview
+      ? "Manager Review"
+      : "Completed";
 
   const nextStore = {
     ...store,
@@ -120,8 +141,8 @@ export async function POST(request, { params }) {
         : item,
     ),
     logs: [
-      validation.requiresManagerReview
-        ? `Technician submission for ${complaint.id} flagged for manager review.`
+      nextState === "Manager Review"
+        ? `Technician submission for ${complaint.id} flagged for manager review. AI: ${resolutionValidation.reason}`
         : `Technician submission for ${complaint.id} validated and marked completed.`,
       ...store.logs,
     ].slice(0, 100),

@@ -7,6 +7,7 @@ import {
 } from "@/lib/image-validation";
 import { readStore, writeStore } from "@/lib/store";
 import { runPreValidation } from "@/lib/workflow";
+import { validateProblemExists } from "@/lib/image-analyzer-client";
 
 function mapDepartment(category) {
   if (category === "Pothole") return "Roads";
@@ -115,6 +116,47 @@ export async function POST(request) {
   const savedImage = await saveImageFile(complaintImageFile, "complaint");
   const imageHash = await computeAverageHash(savedImage.buffer);
 
+  // AI validation: Check if the reported problem actually exists
+  const problemValidation = await validateProblemExists(
+    savedImage.absolutePath,
+    payload.category,
+  );
+
+  // If confidence is high that problem doesn't exist, flag for review
+  if (!problemValidation.valid && problemValidation.confidence > 0.7) {
+    const complaint = generateComplaint(payload, {
+      hash: imageHash,
+      path: savedImage.relativePath,
+      reusedAcrossUsers: false,
+    });
+
+    const nextStore = {
+      ...store,
+      complaints: [
+        {
+          ...complaint,
+          state: "AI Pre-Validation",
+          validationWarnings: [
+            `AI detected no actual ${payload.category} problem in the image (confidence: ${Math.round(problemValidation.confidence * 100)}%). Reason: ${problemValidation.reason}`,
+          ],
+        },
+        ...store.complaints,
+      ],
+      logs: [
+        `Complaint ${complaint.id} flagged as possible fake problem: ${problemValidation.reason}`,
+        ...store.logs,
+      ].slice(0, 100),
+    };
+
+    await writeStore(nextStore);
+    return NextResponse.json({
+      store: nextStore,
+      duplicateAttached: false,
+      warning: true,
+      aiValidation: problemValidation,
+    });
+  }
+
   const reusedAcrossUsers = store.complaints.some((item) => {
     if (!item.imageHash) return false;
     return hammingDistance(item.imageHash, imageHash) <= 8;
@@ -182,5 +224,9 @@ export async function POST(request) {
   };
 
   await writeStore(nextStore);
-  return NextResponse.json({ store: nextStore, duplicateAttached: false });
+  return NextResponse.json({
+    store: nextStore,
+    duplicateAttached: false,
+    aiValidation: { valid: true, confidence: 1.0 },
+  });
 }

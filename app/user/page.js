@@ -102,7 +102,6 @@ export default function UserDashboardPage() {
     description: "",
     category: "Pothole",
     ward: "Ward 12",
-    scanConfirmed: false,
     complaintImageFile: null,
   });
 
@@ -217,7 +216,7 @@ export default function UserDashboardPage() {
       formData.append("description", newComplaint.description);
       formData.append("category", newComplaint.category);
       formData.append("ward", newComplaint.ward);
-      formData.append("scanConfirmed", String(newComplaint.scanConfirmed));
+
       formData.append("complaintImage", newComplaint.complaintImageFile);
 
       const payload = await callAndApply(
@@ -314,7 +313,7 @@ export default function UserDashboardPage() {
         <div className="flex flex-wrap items-center gap-3">
           <ReactBitsChip />
           <Pill>User workflow</Pill>
-          <Pill tone="purple">Scan + AI validation</Pill>
+          <Pill tone="purple">AI validation</Pill>
         </div>
 
         {feedback.text ? (
@@ -339,7 +338,7 @@ export default function UserDashboardPage() {
         <div className="grid gap-4 lg:grid-cols-12">
           <div className="lg:col-span-4 rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
             <h3 className="mb-3 text-base font-semibold text-slate-900">
-              Scan & Submit Complaint
+              Submit Complaint
             </h3>
             <div className="space-y-2">
               <input
@@ -416,24 +415,7 @@ export default function UserDashboardPage() {
                 }}
               />
 
-              <Notice type={newComplaint.scanConfirmed ? "success" : "warning"}>
-                {newComplaint.scanConfirmed
-                  ? "Scan completed"
-                  : "Scan complaint before submit"}
-              </Notice>
 
-              <Button
-                variant="outline"
-                onClick={() =>
-                  setNewComplaint((current) => ({
-                    ...current,
-                    scanConfirmed: !current.scanConfirmed,
-                  }))
-                }
-              >
-                <ScanLine size={16} />
-                {newComplaint.scanConfirmed ? "Re-scan" : "Scan Complaint"}
-              </Button>
 
               <p className="text-xs text-slate-500">
                 {newComplaint.complaintImageFile

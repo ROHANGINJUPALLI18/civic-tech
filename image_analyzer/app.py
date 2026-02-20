@@ -7,12 +7,9 @@ Image Analysis Service for Civic Complaints
 
 import os
 import base64
-import imagehash
-import cv2
 import numpy as np
 from PIL import Image
 from io import BytesIO
-from skimage.metrics import structural_similarity as ssim
 import google.generativeai as genai
 from flask import Flask, request, jsonify
 
@@ -47,8 +44,12 @@ def load_image_from_file(file_path: str) -> Image.Image:
 
 
 def compute_phash(image: Image.Image) -> str:
-    """Compute perceptual hash of image."""
-    return str(imagehash.phash(image))
+    """Compute a lightweight perceptual hash (average hash) of image."""
+    grayscale = image.convert("L").resize((8, 8), Image.Resampling.LANCZOS)
+    pixels = np.asarray(grayscale, dtype=np.float32)
+    mean_value = float(pixels.mean())
+    bits = (pixels > mean_value).astype(np.uint8).flatten()
+    return "".join(f"{int(bit):x}" for bit in bits)
 
 
 def hamming_distance(hash1: str, hash2: str) -> int:
@@ -57,18 +58,17 @@ def hamming_distance(hash1: str, hash2: str) -> int:
 
 
 def compute_ssim(image1: Image.Image, image2: Image.Image) -> float:
-    """Compute Structural Similarity Index (SSIM) between two images."""
+    """Compute a lightweight similarity score (1 - normalized MSE) between two images."""
     try:
-        # Convert to grayscale
-        img1 = cv2.cvtColor(np.array(image1), cv2.COLOR_RGB2GRAY)
-        img2 = cv2.cvtColor(np.array(image2), cv2.COLOR_RGB2GRAY)
+        img1 = np.asarray(image1.convert("L"), dtype=np.float32)
+        target_size = (img1.shape[1], img1.shape[0])
+        resized_img2 = image2.convert("L").resize(target_size, Image.Resampling.LANCZOS)
+        img2 = np.asarray(resized_img2, dtype=np.float32)
 
-        # Resize img2 to match img1 dimensions
-        img2 = cv2.resize(img2, (img1.shape[1], img1.shape[0]))
-
-        # Compute SSIM
-        similarity = ssim(img1, img2)
-        return float(similarity)
+        mse = float(np.mean((img1 - img2) ** 2))
+        normalized_mse = mse / (255.0 ** 2)
+        similarity = max(0.0, min(1.0, 1.0 - normalized_mse))
+        return similarity
     except Exception as e:
         return 0.0
 
@@ -294,4 +294,5 @@ def validate_resolution():
 
 
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=5000, debug=False)
+    port = int(os.environ.get("IMAGE_ANALYZER_PORT", "5001"))
+    app.run(host="0.0.0.0", port=port, debug=False)

@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { Camera, ScanLine, ShieldAlert } from "lucide-react";
+import { Camera, ShieldAlert } from "lucide-react";
 
 import { SpotlightBanner } from "@/components/civic/spotlight-banner";
 import { ReactBitsChip } from "@/components/civic/reactbits-chip";
@@ -213,7 +213,7 @@ export default function AdminDashboardPage() {
     try {
       const formData = new FormData();
       formData.append("proofCaptured", String(details.proofCaptured));
-      formData.append("scanConfirmed", String(details.scanConfirmed));
+
       formData.append("afterImage", details.afterImageFile);
 
       await callAndApply(
@@ -466,7 +466,7 @@ export default function AdminDashboardPage() {
           </h3>
           <div className="mt-3">
             <Notice>
-              Technician completion workflow: open camera, scan evidence, submit
+              Technician completion workflow: open camera, capture evidence, submit
               for backend AI verification.
             </Notice>
           </div>
@@ -476,7 +476,7 @@ export default function AdminDashboardPage() {
               assignedForTechnicians.map((complaint) => {
                 const details = techSubmission[complaint.id] || {
                   proofCaptured: false,
-                  scanConfirmed: false,
+
                   afterImageFile: null,
                 };
 
@@ -530,21 +530,7 @@ export default function AdminDashboardPage() {
                           : "Open Camera"}
                       </Button>
 
-                      <Button
-                        variant="outline"
-                        onClick={() =>
-                          setTechSubmission((current) => ({
-                            ...current,
-                            [complaint.id]: {
-                              ...details,
-                              scanConfirmed: !details.scanConfirmed,
-                            },
-                          }))
-                        }
-                      >
-                        <ScanLine size={16} />
-                        {details.scanConfirmed ? "Scanned" : "Scan"}
-                      </Button>
+
                     </div>
 
                     <p className="mt-2 text-xs text-slate-500">

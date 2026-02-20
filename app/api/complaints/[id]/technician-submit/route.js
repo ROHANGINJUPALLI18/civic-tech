@@ -50,14 +50,14 @@ export async function POST(request, { params }) {
     );
   }
 
-  if (!payload?.proofCaptured || !payload?.scanConfirmed) {
+  if (!payload?.proofCaptured) {
     const flaggedStore = {
       ...store,
       complaints: store.complaints.map((item) =>
         item.id === complaint.id ? { ...item, state: "Manager Review" } : item,
       ),
       logs: [
-        `Fraud alert: ${complaint.id} completion rejected due to missing proof/scan evidence.`,
+        `Fraud alert: ${complaint.id} completion rejected due to missing proof evidence.`,
         ...store.logs,
       ].slice(0, 100),
     };

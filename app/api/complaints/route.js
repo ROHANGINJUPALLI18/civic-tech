@@ -92,15 +92,7 @@ export async function POST(request) {
     );
   }
 
-  if (!payload?.scanConfirmed) {
-    return NextResponse.json(
-      {
-        message:
-          "Complaint scan required. Please scan/upload location + timestamp evidence before submit.",
-      },
-      { status: 400 },
-    );
-  }
+
 
   if (
     !complaintImageFile ||

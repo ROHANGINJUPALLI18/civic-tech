@@ -1,6 +1,7 @@
 import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
 import { RootNavbar } from "@/components/civic/root-navbar";
+import { MuiProvider } from "@/components/civic/mui-provider";
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -24,8 +25,10 @@ export default function RootLayout({ children }) {
       <body
         className={`${geistSans.variable} ${geistMono.variable} antialiased`}
       >
-        <RootNavbar />
-        <div className="pt-16">{children}</div>
+        <MuiProvider>
+          <RootNavbar />
+          <div className="pt-16">{children}</div>
+        </MuiProvider>
       </body>
     </html>
   );

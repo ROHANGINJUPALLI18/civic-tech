@@ -1,22 +1,17 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import {
+  Alert,
+  Box,
+  Card,
+  CardContent,
+  Stack,
+  TextField,
+  Typography,
+} from "@mui/material";
 
 import { Button } from "@/components/ui/button";
-
-function Notice({ type = "info", children }) {
-  const styles =
-    type === "error"
-      ? "border-red-200 bg-red-50 text-red-700"
-      : type === "success"
-        ? "border-green-200 bg-green-50 text-green-700"
-        : "border-blue-200 bg-blue-50 text-blue-700";
-  return (
-    <div className={`rounded-md border px-3 py-2 text-sm ${styles}`}>
-      {children}
-    </div>
-  );
-}
 
 export default function LoginPage() {
   const [username, setUsername] = useState("");
@@ -74,48 +69,135 @@ export default function LoginPage() {
   };
 
   return (
-    <main className="min-h-screen bg-slate-50">
-      <section className="mx-auto flex w-full max-w-4xl items-center justify-center p-4 md:p-8">
-        <div className="w-full space-y-4">
-          <div className="mx-auto w-full max-w-md rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
-            <h2 className="mb-4 text-lg font-semibold text-slate-900">Login</h2>
+    <Box
+      sx={{
+        minHeight: "calc(100vh - 64px)",
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        py: { xs: 4, md: 8 },
+        px: 2,
+        bgcolor: "#F7F8F0",
+        backgroundImage: `
+          radial-gradient(circle at 20% 50%, rgba(156, 213, 255, 0.08) 0%, transparent 50%),
+          radial-gradient(circle at 80% 80%, rgba(156, 213, 255, 0.12) 0%, transparent 50%)
+        `,
+      }}
+    >
+      <Card
+        elevation={3}
+        sx={{
+          width: "100%",
+          maxWidth: 480,
+          borderRadius: 5,
+          bgcolor: "background.paper",
+          overflow: "hidden",
+          boxShadow: "0 8px 32px rgba(0, 0, 0, 0.08)",
+          transition: "transform 0.2s ease, box-shadow 0.2s ease",
+          "&:hover": {
+            transform: "translateY(-2px)",
+            boxShadow: "0 12px 40px rgba(0, 0, 0, 0.12)",
+          },
+        }}
+      >
+        <CardContent sx={{ p: { xs: 4, md: 5 } }}>
+          <Stack spacing={3}>
+            <Box textAlign="center">
+              <Typography 
+                variant="h4" 
+                color="text.primary" 
+                fontWeight={700}
+                sx={{ mb: 1 }}
+              >
+                Welcome Back
+              </Typography>
+              <Typography variant="body2" color="text.secondary">
+                Sign in to access your dashboard
+              </Typography>
+            </Box>
 
-            <div className="space-y-3">
-              <input
-                className="w-full rounded-md border border-slate-300 px-3 py-2 text-sm outline-none focus:border-slate-500"
-                placeholder="Username"
-                value={username}
-                onChange={(event) => setUsername(event.target.value)}
-              />
+            <TextField
+              label="Username"
+              value={username}
+              onChange={(event) => setUsername(event.target.value)}
+              fullWidth
+              sx={{
+                "& .MuiOutlinedInput-root": {
+                  borderRadius: 2.5,
+                  bgcolor: "#FAFBFC",
+                  transition: "all 0.2s ease",
+                  "&:hover": {
+                    bgcolor: "#F7F9FB",
+                  },
+                  "&.Mui-focused": {
+                    bgcolor: "background.paper",
+                  },
+                },
+              }}
+            />
 
-              <input
-                type="password"
-                className="w-full rounded-md border border-slate-300 px-3 py-2 text-sm outline-none focus:border-slate-500"
-                placeholder="Password"
-                value={password}
-                onChange={(event) => setPassword(event.target.value)}
-                onKeyDown={(event) => {
-                  if (event.key === "Enter") onLogin();
-                }}
-              />
+            <TextField
+              type="password"
+              label="Password"
+              value={password}
+              onChange={(event) => setPassword(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === "Enter") onLogin();
+              }}
+              fullWidth
+              sx={{
+                "& .MuiOutlinedInput-root": {
+                  borderRadius: 2.5,
+                  bgcolor: "#FAFBFC",
+                  transition: "all 0.2s ease",
+                  "&:hover": {
+                    bgcolor: "#F7F9FB",
+                  },
+                  "&.Mui-focused": {
+                    bgcolor: "background.paper",
+                  },
+                },
+              }}
+            />
 
-              <Notice>
-                <p className="font-medium">Demo credentials</p>
-                <p>User: user / user123</p>
-                <p>Admin: admin / admin123</p>
-              </Notice>
+            {feedback.text ? (
+              <Alert severity={feedback.type === "error" ? "error" : "success"}>
+                {feedback.text}
+              </Alert>
+            ) : null}
 
-              {feedback.text ? (
-                <Notice type={feedback.type}>{feedback.text}</Notice>
-              ) : null}
-
-              <Button onClick={onLogin} disabled={busy} className="w-full">
-                {busy ? "Signing in..." : "Login"}
-              </Button>
-            </div>
-          </div>
-        </div>
-      </section>
-    </main>
+            <Button
+              onClick={onLogin}
+              disabled={busy}
+              fullWidth
+              sx={{
+                mt: 1,
+                py: 1.5,
+                borderRadius: 2.5,
+                bgcolor: "primary.main",
+                color: "common.white",
+                fontSize: "1rem",
+                fontWeight: 600,
+                textTransform: "none",
+                boxShadow: "0 4px 12px rgba(156, 213, 255, 0.3)",
+                transition: "all 0.2s ease",
+                "&:hover": { 
+                  bgcolor: "primary.dark",
+                  boxShadow: "0 6px 16px rgba(156, 213, 255, 0.4)",
+                  transform: "translateY(-1px)",
+                },
+                "&:disabled": {
+                  bgcolor: "action.disabledBackground",
+                  color: "action.disabled",
+                  boxShadow: "none",
+                },
+              }}
+            >
+              {busy ? "Signing in..." : "Login"}
+            </Button>
+          </Stack>
+        </CardContent>
+      </Card>
+    </Box>
   );
 }
